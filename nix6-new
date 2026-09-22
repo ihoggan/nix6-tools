@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# nix6-new — bootstrap a new Python + GitHub project on nix6
+#
+# Usage:
+#   nix6-new <name>
+#   nix6-new <name> --desc "One-line description"
+#   nix6-new <name> --deps "requests,rich"
+#   nix6-new <name> --private
+#   nix6-new <name> --from ~/Downloads/mytool
+#
+# Requires:
+#   - Part 1 of nix6_environments.md complete (git, ssh key, PATH)
+#   - Appendix A (gh CLI authenticated)
+#
+# What it does:
+#   1. Runs a preflight check (fails fast with a clear message if anything's missing)
+#   2. Creates ~/code/<name>/
+#   3. Creates a venv at ~/code/<name>/venv
+#   4. Installs any deps you gave it
+#   5. Drops in a Python scaffold (README.md, .gitignore, main.py, requirements.txt)
+#      — OR copies files from --from if you gave it
+#   6. git init + first commit
+#   7. Creates the GitHub repo (public by default) and pushes
+#   8. Prints the two commands to start work
+
+set -euo pipefail
+
+# --- output helpers ---
+say()  { printf '\033[36m▸\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m⚠\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+# --- arg parse ---
+NAME=""
+DESC=""
+DEPS=""
+PRIVATE=false
+FROM=""
+
+usage() {
+    cat <<EOF
+Usage: nix6-new <name> [options]
+
+Options:
+  --desc "..."       One-line description (goes in commit message and repo desc)
+  --deps "a,b,c"     Comma-separated pip packages to install and add to requirements.txt
+  --private          Create a private GitHub repo (default: public)
+  --from <dir>       Copy scaffold files from <dir> instead of using the default
+  -h, --help         Show this
+
+Example:
+  nix6-new mytool --desc "A little CLI utility" --deps "click,rich"
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --desc)    DESC="$2"; shift 2 ;;
+        --deps)    DEPS="$2"; shift 2 ;;
+        --private) PRIVATE=true; shift ;;
+        --from)    FROM="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        -*)        die "Unknown option: $1  (try --help)" ;;
+        *)         if [ -z "$NAME" ]; then NAME="$1"; shift
+                   else die "Only one project name allowed"; fi ;;
+    esac
+done
+
+[ -z "$NAME" ] && { usage; exit 1; }
+
+# --- validate name ---
+if [[ ! "$NAME" =~ ^[a-z][a-z0-9-]*$ ]]; then
+    die "Project name must be lowercase, start with a letter, and contain only letters, digits, or hyphens. Got: '$NAME'"
+fi
+
+CODE_DIR="$HOME/code/$NAME"
+[ -e "$CODE_DIR" ] && die "$CODE_DIR already exists. Use nix6-open to resume."
+
+# --- preflight ---
+say "Preflight..."
+
+command -v git     >/dev/null || die "git not installed — see Part 1.1 of nix6_environments.md"
+command -v python3 >/dev/null || die "python3 not installed — sudo apt install python3 python3-venv"
+command -v gh      >/dev/null || die "gh not installed — see Appendix A of nix6_environments.md"
+
+# Git identity
+git config --global user.name  >/dev/null 2>&1 || die "git user.name not set — see Part 1.2"
+git config --global user.email >/dev/null 2>&1 || die "git user.email not set — see Part 1.2"
+
+# init.defaultBranch main should be set — if not, warn loudly (we can still succeed but this is a smell)
+BRANCH_DEFAULT="$(git config --global init.defaultBranch 2>/dev/null || echo "")"
+if [ "$BRANCH_DEFAULT" != "main" ]; then
+    warn "init.defaultBranch is not 'main' (currently: '${BRANCH_DEFAULT:-unset}'). Setting it now."
+    git config --global init.defaultBranch main
+fi
+
+# SSH key
+[ -f "$HOME/.ssh/id_ed25519.pub" ] || die "SSH key not found at ~/.ssh/id_ed25519.pub — see Part 1.3"
+
+# SSH to GitHub
+# NB: `ssh -T git@github.com` exits 1 even on successful auth (it's a "no shell" test).
+# Capture output separately so `set -o pipefail` doesn't false-negative us.
+SSH_OUT="$(ssh -o BatchMode=yes -T git@github.com 2>&1 || true)"
+if ! echo "$SSH_OUT" | grep -q "successfully authenticated"; then
+    die "SSH to github.com failing. Test with: ssh -T git@github.com"
+fi
+
+# gh auth
+if ! gh auth status >/dev/null 2>&1; then
+    die "gh CLI not authenticated. Run: gh auth login  (see Appendix A)"
+fi
+
+# GitHub username (used for the repo URL)
+GH_USER="$(gh api user --jq .login)"
+[ -z "$GH_USER" ] && die "Couldn't determine your GitHub username via gh api user"
+
+# Repo doesn't already exist on GitHub
+if gh repo view "$GH_USER/$NAME" >/dev/null 2>&1; then
+    die "Repo $GH_USER/$NAME already exists on GitHub. Use nix6-open to resume."
+fi
+
+ok "Preflight passed (user: $GH_USER)"
+
+# --- create folder + venv ---
+say "Creating $CODE_DIR"
+mkdir -p "$CODE_DIR"
+cd "$CODE_DIR"
+
+say "Creating venv at ./venv"
+python3 -m venv venv
+
+# --- scaffold files ---
+if [ -n "$FROM" ]; then
+    [ -d "$FROM" ] || die "--from directory does not exist: $FROM"
+    say "Copying files from $FROM"
+    # Copy everything including dotfiles, but skip . and ..
+    (shopt -s dotglob; cp -r "$FROM"/* . 2>/dev/null || true)
+else
+    say "Dropping standard Python scaffold"
+
+    cat > README.md <<EOF
+# $NAME
+
+${DESC:-One-line description of $NAME goes here.}
+EOF
+
+    cat > .gitignore <<'EOF'
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+env/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local
+*.log
+scratch/
+EOF
+
+    cat > main.py <<EOF
+#!/usr/bin/env python3
+"""Entry point for $NAME."""
+
+
+def main() -> None:
+    print("Hello from $NAME")
+
+
+if __name__ == "__main__":
+    main()
+EOF
+
+    if [ -n "$DEPS" ]; then
+        # One dep per line, comma-separated input
+        printf '%s\n' "${DEPS//,/$'\n'}" > requirements.txt
+    else
+        echo "# Add pip packages here, one per line." > requirements.txt
+    fi
+fi
+
+# Ensure venv/ is gitignored regardless of scaffold source
+if ! grep -qxF "venv/" .gitignore 2>/dev/null; then
+    echo "venv/" >> .gitignore
+fi
+
+# --- install deps ---
+if [ -n "$DEPS" ]; then
+    say "Installing deps: $DEPS"
+    # shellcheck disable=SC2086
+    ./venv/bin/pip install --quiet ${DEPS//,/ }
+elif [ -f requirements.txt ] && grep -qv '^#' requirements.txt 2>/dev/null; then
+    # If --from brought a requirements.txt with real entries, install them
+    if grep -Ev '^\s*(#|$)' requirements.txt >/dev/null; then
+        say "Installing from requirements.txt"
+        ./venv/bin/pip install --quiet -r requirements.txt
+    fi
+fi
+
+# --- git init + commit ---
+say "Initialising git and committing"
+git init --quiet
+git add .
+COMMIT_MSG="Initial commit"
+[ -n "$DESC" ] && COMMIT_MSG="Initial commit — $DESC"
+git commit --quiet -m "$COMMIT_MSG"
+
+# Sanity: branch should be main
+CURRENT_BRANCH="$(git branch --show-current)"
+if [ "$CURRENT_BRANCH" != "main" ]; then
+    warn "Branch is '$CURRENT_BRANCH', renaming to 'main'"
+    git branch -m "$CURRENT_BRANCH" main
+fi
+
+# --- GitHub ---
+VISIBILITY="--public"
+$PRIVATE && VISIBILITY="--private"
+
+say "Creating GitHub repo $GH_USER/$NAME and pushing"
+gh repo create "$GH_USER/$NAME" $VISIBILITY --source=. --remote=origin --push \
+    ${DESC:+--description "$DESC"} >/dev/null
+
+# --- done ---
+echo
+ok "$NAME created at $CODE_DIR"
+ok "Pushed to https://github.com/$GH_USER/$NAME"
+echo
+printf '\033[1mTo start working:\033[0m\n'
+printf '  cd %s && source venv/bin/activate\n' "$CODE_DIR"

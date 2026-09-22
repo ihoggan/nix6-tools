@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# nix6-open — resume work on a nix6 project
+#
+# Usage:
+#   nix6-open <name>            open a project by name
+#   nix6-open --list            list all local projects
+#   nix6-open --remote          list all your GitHub repos not yet cloned locally
+#
+# What it does:
+#   Case A: ~/code/<name> exists locally
+#     - Ensures venv exists (creates if not)
+#     - Runs pip install -r requirements.txt if present (keeps deps current)
+#     - Prints the cd + activate commands
+#
+#   Case B: not local, but exists on GitHub under your account
+#     - Clones into ~/code/<name>
+#     - Creates venv, installs requirements.txt if present
+#     - Prints the cd + activate commands
+#
+#   Case C: nowhere
+#     - Errors with a hint to use nix6-new
+
+set -euo pipefail
+
+say()  { printf '\033[36m▸\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m⚠\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+# NB: `ssh -T git@github.com` exits 1 even on successful auth. If nix6-open ever
+# needs to check SSH itself, capture with `|| true` and grep the output — don't
+# rely on the pipe exit under set -o pipefail.
+
+# --- arg parse ---
+NAME=""
+MODE="open"
+
+usage() {
+    cat <<EOF
+Usage:
+  nix6-open <name>       Open (or clone-and-open) a project
+  nix6-open --list       List local projects in ~/code/
+  nix6-open --remote     List your GitHub repos not cloned locally yet
+  nix6-open -h|--help    Show this
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --list)    MODE="list"; shift ;;
+        --remote)  MODE="remote"; shift ;;
+        -h|--help) usage; exit 0 ;;
+        -*)        die "Unknown option: $1  (try --help)" ;;
+        *)         if [ -z "$NAME" ]; then NAME="$1"; shift
+                   else die "Only one project name allowed"; fi ;;
+    esac
+done
+
+# --- list mode ---
+if [ "$MODE" = "list" ]; then
+    [ -d "$HOME/code" ] || die "No ~/code directory yet."
+    say "Local projects in ~/code:"
+    for d in "$HOME/code"/*/; do
+        [ -d "$d" ] || continue
+        name="$(basename "$d")"
+        marker=""
+        [ -d "$d/venv" ] || marker=" (no venv)"
+        [ -d "$d/.git" ] || marker="$marker (no git)"
+        printf "  %s%s\n" "$name" "$marker"
+    done
+    exit 0
+fi
+
+# --- remote mode ---
+if [ "$MODE" = "remote" ]; then
+    command -v gh >/dev/null || die "gh not installed"
+    gh auth status >/dev/null 2>&1 || die "gh not authenticated"
+    GH_USER="$(gh api user --jq .login)"
+    say "Your GitHub repos not cloned to ~/code:"
+    gh repo list "$GH_USER" --json name --jq '.[].name' | while read -r r; do
+        [ -d "$HOME/code/$r" ] || printf "  %s\n" "$r"
+    done
+    exit 0
+fi
+
+# --- open mode ---
+[ -z "$NAME" ] && { usage; exit 1; }
+
+CODE_DIR="$HOME/code/$NAME"
+
+# Case A: local
+if [ -d "$CODE_DIR" ]; then
+    ok "Found $NAME at $CODE_DIR"
+    cd "$CODE_DIR"
+
+    if [ ! -d venv ]; then
+        warn "No venv found — creating"
+        python3 -m venv venv
+    fi
+
+    if [ -f requirements.txt ] && grep -Ev '^\s*(#|$)' requirements.txt >/dev/null 2>&1; then
+        say "Ensuring requirements.txt deps are installed"
+        ./venv/bin/pip install --quiet -r requirements.txt
+    fi
+
+    echo
+    printf '\033[1mTo start working:\033[0m\n'
+    printf '  cd %s && source venv/bin/activate\n' "$CODE_DIR"
+    exit 0
+fi
+
+# Case B: on GitHub
+command -v gh >/dev/null || die "$NAME not found locally, and gh not installed to check GitHub"
+gh auth status >/dev/null 2>&1 || die "$NAME not found locally, and gh not authenticated to check GitHub"
+
+GH_USER="$(gh api user --jq .login)"
+
+if gh repo view "$GH_USER/$NAME" >/dev/null 2>&1; then
+    say "Not local — cloning $GH_USER/$NAME from GitHub"
+    mkdir -p "$HOME/code"
+    gh repo clone "$GH_USER/$NAME" "$CODE_DIR" >/dev/null 2>&1
+    cd "$CODE_DIR"
+
+    say "Creating venv"
+    python3 -m venv venv
+
+    if [ -f requirements.txt ] && grep -Ev '^\s*(#|$)' requirements.txt >/dev/null 2>&1; then
+        say "Installing requirements.txt"
+        ./venv/bin/pip install --quiet -r requirements.txt
+    fi
+
+    ok "Cloned to $CODE_DIR"
+    echo
+    printf '\033[1mTo start working:\033[0m\n'
+    printf '  cd %s && source venv/bin/activate\n' "$CODE_DIR"
+    exit 0
+fi
+
+# Case C: nowhere
+die "No project '$NAME' found locally (~/code/$NAME) or on GitHub ($GH_USER/$NAME).
+Try:  nix6-new $NAME"
