@@ -1,185 +1,122 @@
-# Installing nix6-new and nix6-open
+# nix6-tools
 
-Two Bash scripts that automate the nix6 project workflow. `nix6-new` bootstraps a fresh project (folder + venv + git + GitHub + push, all in one). `nix6-open` resumes an existing project (local or from GitHub).
+A new Python + GitHub project in one command, on an old PC running Ubuntu.
 
-## Prerequisites
+- **`nix6-new <name>`** makes the folder, a `venv` inside it, a starter set of files and the first commit, creates the GitHub repo and pushes.
+- **`nix6-open <name>`** picks a project back up. If it isn't on this machine yet, it clones it from your GitHub first, then makes sure the venv and packages are in place.
 
-Both scripts assume you've done Part 1 of `nix6_environments.md` AND Appendix A (gh CLI authenticated). If either isn't done, the scripts fail fast with a clear message telling you which step to go back to.
+Plus the full workflow they automate, written for someone coming back to Linux after years away: **[nix6_environments.md](nix6_environments.md)**.
 
-## Install (one-time)
+Built on and for **nix6**, a 2015 Dell OptiPlex 3040 rescued from the skip and running Ubuntu 24.04. It's part of the same story as [localcast](https://github.com/IHoggan/localcast), persistent AI characters running on that machine.
 
-Download `nix6-new` and `nix6-open` to `~/Downloads`, then run these commands (each line is one command):
+## Before you start
+
+The scripts need two things set up first. Both are in the workflow doc, with a checkpoint at every step:
+
+1. **Part 1** of [nix6_environments.md](nix6_environments.md): git, your git identity, an SSH key on GitHub, and `~/.local/bin` on your PATH.
+2. **Appendix A**: the GitHub CLI (`gh`) logged in.
+
+If either is missing, the scripts stop straight away and tell you which step to go back to.
+
+## Install
 
 ```bash
-# 1. Make sure the target directory exists (safe to run even if it does)
-mkdir -p ~/.local/bin
-
-# 2. Move both scripts in
-mv ~/Downloads/nix6-new ~/.local/bin/
-mv ~/Downloads/nix6-open ~/.local/bin/
-
-# 3. Make them executable
+mkdir -p ~/code ~/.local/bin
+git clone https://github.com/IHoggan/nix6-tools.git ~/code/nix6-tools
+cp ~/code/nix6-tools/nix6-new ~/code/nix6-tools/nix6-open ~/.local/bin/
 chmod +x ~/.local/bin/nix6-new ~/.local/bin/nix6-open
-
-# 4. Make sure ~/.local/bin is on PATH (adds to .bashrc if not)
-echo $PATH | tr ':' '\n' | grep -q "$HOME/.local/bin" && echo "PATH OK" || {
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-    source ~/.bashrc
-    echo "Added to .bashrc and sourced."
-}
-
-# 5. Verify
-which nix6-new
-which nix6-open
 ```
 
-Both `which` calls should print `/home/iain/.local/bin/nix6-new` (and similar for nix6-open). If either prints nothing, open a fresh terminal and re-run `which nix6-new`.
-
-### Installing OVER an existing version (updates)
-
-If you've been given a fixed or updated script, the process is the same as install — the `mv` will overwrite the old one. Just re-run steps 2 and 3:
-
+**Checkpoint:**
 ```bash
-mv ~/Downloads/nix6-new ~/.local/bin/nix6-new
-chmod +x ~/.local/bin/nix6-new
+which nix6-new nix6-open
+```
+Prints two paths, `/home/<you>/.local/bin/nix6-new` and `/home/<you>/.local/bin/nix6-open`. If it prints nothing, open a new terminal and try again. If it still prints nothing, do step 1.4 of the workflow doc.
+
+**To update later:**
+```bash
+cd ~/code/nix6-tools && git pull
+cp nix6-new nix6-open ~/.local/bin/
 ```
 
-If your browser renamed the download (e.g. `nix6-new (1)` because the original was already in Downloads), use that filename in the `mv` source.
+## nix6-new
 
-## Usage: nix6-new
-
-### Simplest form
 ```bash
 nix6-new mytool
 ```
-Creates `~/code/mytool/` with a bare Python scaffold, initialises git on the `main` branch, creates a public GitHub repo under your account, and pushes.
 
-### With a description
-```bash
-nix6-new mytool --desc "A little CLI utility"
-```
-The description goes into both the commit message and the GitHub repo's description field.
+This creates `~/code/mytool/`, gives it its own `venv`, commits a starter set of files on the `main` branch, creates a **public** GitHub repo called `mytool` under your account, and pushes.
 
-### With pip dependencies pre-installed
-```bash
-nix6-new mytool --desc "..." --deps "click,rich,requests"
-```
-Installs those packages into the venv AND adds them to `requirements.txt`.
+Options:
 
-### Private repo
 ```bash
-nix6-new mytool --private
+nix6-new mytool --desc "A little CLI utility"      # description for the commit and the GitHub repo
+nix6-new mytool --deps "requests,rich"             # install packages and list them in requirements.txt
+nix6-new mytool --private                          # private repo instead of public
+nix6-new mytool --from ~/Downloads/mytool-draft    # start from your own files instead of the starter set
 ```
 
-### With your own starter files
-```bash
-nix6-new mytool --from ~/Downloads/mytool-draft
-```
-Copies everything from `~/Downloads/mytool-draft/` into the new project folder instead of using the default scaffold. If that folder has a `requirements.txt` with real entries, they'll be installed automatically.
+Project names must be lowercase letters, digits and hyphens, starting with a letter.
 
-### What ends up in the project (default scaffold)
+The starter set:
 
 ```
 ~/code/mytool/
-├── venv/               # local virtualenv (gitignored)
-├── .git/
-├── .gitignore          # Python-focused
-├── README.md           # just name + description
-├── main.py             # trivial entry-point stub
-└── requirements.txt    # empty (or your --deps, one per line)
+├── venv/               # this project's own Python packages (never committed)
+├── .gitignore          # already ignores venv/
+├── README.md           # the name and description
+├── main.py             # a "hello" entry point
+└── requirements.txt    # your --deps, one per line
 ```
 
-### After it runs
+When it finishes, it prints:
 
-Script prints:
 ```
-✓ mytool created at /home/iain/code/mytool
-✓ Pushed to https://github.com/IHoggan/mytool
+✓ mytool created at /home/<you>/code/mytool
+✓ Pushed to https://github.com/<you>/mytool
 
 To start working:
-  cd /home/iain/code/mytool && source venv/bin/activate
+  cd /home/<you>/code/mytool && source venv/bin/activate
 ```
 
-Copy the last line, paste, and you're in the venv ready to code.
+Copy that last line into your terminal and you're in.
 
-## Usage: nix6-open
-
-### Open a project you already have locally
-```bash
-nix6-open mytool
-```
-Checks the venv exists (creates one if not), ensures `requirements.txt` deps are installed, then prints the cd + activate commands.
-
-### Open a project from GitHub you haven't cloned yet
-```bash
-nix6-open mytool
-```
-Same command. If `~/code/mytool` doesn't exist, the script checks your GitHub account for a repo of that name and clones it in, creates the venv, installs `requirements.txt`.
-
-### List all your local projects
-```bash
-nix6-open --list
-```
-Shows every project in `~/code/`, flagging any without a venv or without `.git/`.
-
-### List your GitHub repos not yet cloned locally
-```bash
-nix6-open --remote
-```
-Handy for "what have I got on GitHub that I haven't touched on this machine?"
-
-### After it runs
-
-Same as `nix6-new` — prints the two commands to actually start work:
-```
-To start working:
-  cd /home/iain/code/mytool && source venv/bin/activate
-```
-
-## Why the scripts don't just cd + activate for you
-
-Bash scripts run in a child shell. When the script exits, any `cd` it did and any venv it activated die with the child shell — they can't affect your parent shell. So both scripts print the exact commands for you to run.
-
-If you want a true "one command that lands you in the project with the venv active", you can add a shell function to your `~/.bashrc`:
+## nix6-open
 
 ```bash
-# nix6-cd — actually cd into a project and activate its venv
-nix6-cd() {
-    local d="$HOME/code/$1"
-    if [ ! -d "$d" ]; then
-        echo "No such project: $1" >&2
-        return 1
-    fi
-    cd "$d" || return 1
-    if [ -f venv/bin/activate ]; then
-        source venv/bin/activate
-    fi
-}
+nix6-open mytool      # open a project (cloning it from your GitHub first if it isn't here)
+nix6-open --list      # projects in ~/code, flagging any without a venv or git
+nix6-open --remote    # your GitHub repos that aren't on this machine yet
 ```
 
-Then `nix6-cd mytool` really does drop you in the project with the venv active.
+Like `nix6-new`, it ends by printing the `cd ... && source venv/bin/activate` line to paste.
+
+## Why don't they just put me in the folder?
+
+A script runs in its own copy of the shell. Anything it does with `cd` or `source` disappears when it finishes, so it can't change *your* terminal. That's why both scripts print the line for you to paste.
+
+If you'd like one command that really does drop you in, add this to the end of `~/.bashrc`, then open a new terminal:
+
+```bash
+nix6-cd() { cd "$HOME/code/$1" && { [ -f venv/bin/activate ] && source venv/bin/activate; true; }; }
+```
+
+Now `nix6-cd mytool` takes you into the project with its venv active.
 
 ## Troubleshooting
 
-### `Preflight...` then `✗ gh CLI not authenticated`
-Do Appendix A of `nix6_environments.md`. Then retry.
+**`✗ gh CLI not authenticated`**: do Appendix A of the workflow doc.
 
-### `✗ Repo <user>/<name> already exists on GitHub. Use nix6-open to resume.`
-The repo exists on GitHub. Either:
-- Pick a different name for the new project, OR
-- Use `nix6-open <name>` to clone the existing one instead
+**`✗ SSH to github.com failing`**: do step 1.3 of the workflow doc, and check that `ssh -T git@github.com` says "successfully authenticated".
 
-### `✗ /home/iain/code/<name> already exists`
-Local folder already exists. Either:
-- Pick a different name, OR
-- Delete it first: `rm -rf ~/code/<name>` (careful!), OR
-- Use `nix6-open <name>` if it's a valid project you just want to resume
+**`✗ Repo <you>/<name> already exists on GitHub`**: pick another name, or use `nix6-open <name>` to work on the existing one.
 
-### Script says pushed successfully but GitHub page 404s
-Sometimes GitHub takes a second or two to reflect a new push. Refresh the page. If still nothing after 30s, check with `gh repo view <user>/<name>`.
+**`✗ /home/<you>/code/<name> already exists`**: same choice. If you really want to start again, delete it with `rm -rf ~/code/<name>`. There's no undo, so check the name twice.
 
-### `--from` copied files but not dotfiles like `.gitignore`
-The script uses `shopt -s dotglob` before copying, so dotfiles ARE included. If yours weren't, they might not have been in the `--from` folder. Double-check with `ls -la <from-dir>`.
+**The GitHub page is empty straight after pushing**: give it a few seconds and refresh. `gh repo view <you>/<name>` confirms from the terminal.
 
-### `Branch is 'master', renaming to 'main'`
-Not an error — script noticed your git installation defaults to `master` and renamed to `main` for you. It also sets `init.defaultBranch main` globally so it won't happen again. Take it as a hint that Part 1.2 might have been done wrong originally.
+**`Branch is 'master', renaming to 'main'`**: not an error. The script fixed it, and set git's default so it won't happen again.
+
+## Licence
+
+MIT.
